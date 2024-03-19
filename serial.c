@@ -15,25 +15,33 @@ int cmp(const void *a, const void *b) {
 }
 
 pthread_mutex_t fileLock = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t cond1 = PTHREAD_COND_INITIALIZER;
 int totalCompressFiles = 0, totalFiles = 0;
 
 int totalInput = 0, TotalOut = 0, status = 1;
-FILE *f_out; 
+FILE *f_out;
 
 typedef struct CompressTask {
     int threadId;
     char *filePath;
-} CompressTask ;
+} CompressTask;
 
-
-CompressTask taskQueue[256];
+CompressTask *taskQueue = NULL; // Declare taskQueue as a pointer
 int taskCount = 0;
+int taskQueueSize = 256; // Initial size
 
-void compressFile(CompressTask cTask)
-{
-    // printf("compressing %d\n", cTask.threadId);
+void resizeTaskQueue(int newSize) {
+    taskQueue = (CompressTask *)realloc(taskQueue, newSize * sizeof(CompressTask));
+    if (taskQueue == NULL) {
+        perror("Error reallocating memory for taskQueue");
+        exit(EXIT_FAILURE);
+    }
+    taskQueueSize = newSize;
+}
+
+void compressFile(CompressTask cTask) {
     unsigned char buffer_in[BUFFER_SIZE];
     unsigned char buffer_out[BUFFER_SIZE];
 
@@ -71,101 +79,52 @@ void compressFile(CompressTask cTask)
     pthread_cond_broadcast(&cond);
 
     pthread_mutex_unlock(&fileLock);
-    printf("file: %d total: %d\n", totalCompressFiles, totalFiles);
-    printf("Compression rate: %.2lf%%\n", 100.0 * (totalInput - TotalOut) / totalInput);
-    if(totalCompressFiles == totalFiles)
-    {
-        status = 0;
-        pthread_cond_signal(&cond1);
+
+    if (totalCompressFiles == totalFiles) {
+        pthread_cond_broadcast(&cond1);
+        pthread_exit(NULL); // Exit the thread gracefully
     }
 }
 
-void* startThread(void *args)
-{
-    while (status == 1)
-    {
-        CompressTask CTask;
+void *startThread(void *args) {
+    while (1) {
+        pthread_mutex_lock(&queueLock);
 
-        pthread_mutex_lock(&fileLock);
-
-        if(totalCompressFiles == totalFiles)
-        {
-            status = 0;
-            break;
+        while (taskCount == 0 && totalCompressFiles < totalFiles) {
+            pthread_cond_wait(&cond1, &queueLock);
         }
 
-        while (taskCount == 0)
-        {
-            pthread_cond_wait(&cond1, &fileLock);
+        if (taskCount == 0 && totalCompressFiles == totalFiles) {
+            pthread_mutex_unlock(&queueLock);
+            break; // No more tasks and all files compressed, exit the thread
         }
-        
 
-        CTask = taskQueue[0];
-        for (int i = 0; i < taskCount - 1; i++)
-        {
+        CompressTask cTask = taskQueue[0];
+        for (int i = 0; i < taskCount - 1; i++) {
             taskQueue[i] = taskQueue[i + 1];
         }
         taskCount--;
-        pthread_mutex_unlock(&fileLock);
-        compressFile(CTask);
+        pthread_mutex_unlock(&queueLock);
+        compressFile(cTask);
     }
-    
+
+    pthread_exit(NULL);
 }
 
-void addTaskToQueue(CompressTask *cTask)
-{
-    pthread_mutex_lock(&fileLock);
+void addTaskToQueue(CompressTask *cTask) {
+    pthread_mutex_lock(&queueLock);
+
+    if (taskCount == taskQueueSize) {
+        // Resize taskQueue if it's full
+        resizeTaskQueue(taskQueueSize * 2);
+    }
 
     taskQueue[taskCount] = *cTask;
     taskCount++;
 
-    pthread_mutex_unlock(&fileLock);
-    pthread_cond_signal(&cond1);
+    pthread_mutex_unlock(&queueLock);
+    pthread_cond_signal(&cond1); // Signal a task is added
 }
-
-
-// void *processPPM(void *ptr) {
-//     struct threadDTO *trdData = (struct threadDTO *)ptr;
-//     unsigned char buffer_in[BUFFER_SIZE];
-//     unsigned char buffer_out[BUFFER_SIZE];
-
-//     FILE *f_in = fopen(trdData->filePath, "r");
-//     assert(f_in != NULL);
-//     int nbytes = fread(buffer_in, sizeof(unsigned char), BUFFER_SIZE, f_in);
-//     fclose(f_in);
-
-//     // zip file
-//     z_stream strm;
-//     int ret = deflateInit(&strm, 9);
-//     assert(ret == Z_OK);
-//     strm.avail_in = nbytes;
-//     strm.next_in = buffer_in;
-//     strm.avail_out = BUFFER_SIZE;
-//     strm.next_out = buffer_out;
-
-//     ret = deflate(&strm, Z_FINISH);
-//     assert(ret == Z_STREAM_END);
-
-//     pthread_mutex_lock(&file_lock);
-
-//     while (next_thread_id != trdData->threadId) {
-//         pthread_cond_wait(&cond, &file_lock);
-//     }
-
-//     in += nbytes;
-
-//     int nbytes_zipped = BUFFER_SIZE - strm.avail_out;
-//     out += nbytes_zipped;
-
-//     fwrite(&nbytes_zipped, sizeof(int), 1, f_out);
-//     fwrite(buffer_out, sizeof(unsigned char), nbytes_zipped, f_out);
-//     next_thread_id++;
-//     pthread_cond_broadcast(&cond);
-
-//     pthread_mutex_unlock(&file_lock);
-
-//     pthread_exit(NULL);
-// }
 
 int main(int argc, char **argv) {
     // time computation header
@@ -206,17 +165,21 @@ int main(int argc, char **argv) {
     qsort(files, nfiles, sizeof(char *), cmp);
 
     // create a single zipped package with all PPM files in lexicographical order
-
     f_out = fopen("video.vzip", "w"); // Open output file once
     totalFiles = nfiles;
     pthread_t trdPool[THREAD_POOL_LIMIT];
 
-    for (int i = 0; i < THREAD_POOL_LIMIT; i++)
-    {
+    for (int i = 0; i < THREAD_POOL_LIMIT; i++) {
         pthread_create(&trdPool[i], NULL, &startThread, NULL);
     }
-    
-    int threadCounter = 0;
+
+    // Allocate memory for taskQueue
+    taskQueue = (CompressTask *)malloc(taskQueueSize * sizeof(CompressTask));
+    if (taskQueue == NULL) {
+        perror("Error allocating memory for taskQueue");
+        exit(EXIT_FAILURE);
+    }
+
     for (int i = 0; i < nfiles; i++) {
         int len = strlen(argv[1]) + strlen(files[i]) + 2;
         char *full_path = malloc(len * sizeof(char));
@@ -225,20 +188,11 @@ int main(int argc, char **argv) {
         strcat(full_path, "/");
         strcat(full_path, files[i]);
 
-        struct CompressTask *trdData = malloc(sizeof(struct CompressTask));
+        CompressTask *trdData = malloc(sizeof(CompressTask));
         trdData->threadId = i;
         trdData->filePath = strdup(full_path);
 
-        // pthread_create(&trdPool[threadCounter], NULL, processPPM, (void *)trdData);
         addTaskToQueue(trdData);
-        threadCounter++;
-
-        // if (threadCounter == THREAD_LIMIT) {
-        //     for (int j = 0; j < THREAD_LIMIT; j++) {
-        //         pthread_join(tid[j], NULL);
-        //     }
-        //     threadCounter = 0;
-        // }
 
         free(full_path);
     }
@@ -255,14 +209,13 @@ int main(int argc, char **argv) {
     for (int i = 0; i < nfiles; i++)
         free(files[i]);
     free(files);
-
-    // pthread_mutex_destroy(&lock);
+    free(taskQueue); // Free dynamically allocated memory for taskQueue
 
     // do not modify the main function after this point!
 
     // time computation footer
     clock_gettime(CLOCK_MONOTONIC, &end);
-    printf("Time: %.2f seconds\n", ((double)end.tv_sec+1.0e-9*end.tv_nsec)-((double)start.tv_sec+1.0e-9*start.tv_nsec));
+    printf("Time: %.2f seconds\n", ((double)end.tv_sec + 1.0e-9 * end.tv_nsec) - ((double)start.tv_sec + 1.0e-9 * start.tv_nsec));
     // end of time computation footer
 
     return 0;
