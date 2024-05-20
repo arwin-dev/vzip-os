@@ -18,9 +18,8 @@ pthread_mutex_t fileLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
 pthread_cond_t cond1 = PTHREAD_COND_INITIALIZER;
-int totalCompressFiles = 0, totalFiles = 0;
 
-int totalInput = 0, TotalOut = 0, status = 1;
+int totalFIleTracker = 0, totalFiles = 0, totalInput = 0, TotalOut = 0;
 FILE *f_out;
 
 typedef struct CompressTask {
@@ -28,10 +27,12 @@ typedef struct CompressTask {
     char *filePath;
 } CompressTask;
 
-CompressTask *taskQueue = NULL; // Declare taskQueue as a pointer
+// Declare taskQueue as a pointer
+CompressTask *taskQueue = NULL; 
 int taskCount = 0;
 int taskQueueSize = 256; // Initial size
 
+// Resizes the Queue size
 void resizeTaskQueue(int newSize) {
     taskQueue = (CompressTask *)realloc(taskQueue, newSize * sizeof(CompressTask));
     if (taskQueue == NULL) {
@@ -41,6 +42,7 @@ void resizeTaskQueue(int newSize) {
     taskQueueSize = newSize;
 }
 
+// Function that compresses task and writes to the file
 void compressFile(CompressTask cTask) {
     unsigned char buffer_in[BUFFER_SIZE];
     unsigned char buffer_out[BUFFER_SIZE];
@@ -64,7 +66,8 @@ void compressFile(CompressTask cTask) {
 
     pthread_mutex_lock(&fileLock);
 
-    while (totalCompressFiles != cTask.threadId) {
+    // checks if the thread is in lexological order. If not, puts the threat to sleep.
+    while (totalFIleTracker != cTask.threadId) {
         pthread_cond_wait(&cond, &fileLock);
     }
 
@@ -75,42 +78,53 @@ void compressFile(CompressTask cTask) {
 
     fwrite(&nbytes_zipped, sizeof(int), 1, f_out);
     fwrite(buffer_out, sizeof(unsigned char), nbytes_zipped, f_out);
-    totalCompressFiles++;
+    totalFIleTracker++;
+
+    // Wakes up all the threads that are waiting in line 70
     pthread_cond_broadcast(&cond);
 
     pthread_mutex_unlock(&fileLock);
 
-    if (totalCompressFiles == totalFiles) {
+    if (totalFIleTracker == totalFiles) {
+        //If all the files are processed, wakes up all the sleeping threads
         pthread_cond_broadcast(&cond1);
-        pthread_exit(NULL); // Exit the thread gracefully
+        pthread_exit(NULL); 
     }
 }
 
+// Initializes the thread and processes the Task
 void *startThread(void *args) {
     while (1) {
         pthread_mutex_lock(&queueLock);
 
-        while (taskCount == 0 && totalCompressFiles < totalFiles) {
+        // If the queue doesn't have any available Task, puts the thread to sleep
+        while (taskCount == 0 && totalFIleTracker < totalFiles) {
             pthread_cond_wait(&cond1, &queueLock);
         }
 
-        if (taskCount == 0 && totalCompressFiles == totalFiles) {
+        // If all the files are processed, exits the loop
+        if (taskCount == 0 && totalFIleTracker == totalFiles) {
             pthread_mutex_unlock(&queueLock);
             break; // No more tasks and all files compressed, exit the thread
         }
 
+        // FIFO - Gets the first Task in the queue and compresses the Task
         CompressTask cTask = taskQueue[0];
         for (int i = 0; i < taskCount - 1; i++) {
             taskQueue[i] = taskQueue[i + 1];
         }
         taskCount--;
+
         pthread_mutex_unlock(&queueLock);
+        
+        //Process the Task
         compressFile(cTask);
     }
 
     pthread_exit(NULL);
 }
 
+// Adds a Task into taskQueue to be compressed 
 void addTaskToQueue(CompressTask *cTask) {
     pthread_mutex_lock(&queueLock);
 
@@ -166,15 +180,21 @@ int main(int argc, char **argv) {
 
     // create a single zipped package with all PPM files in lexicographical order
     f_out = fopen("video.vzip", "w"); // Open output file once
+
+    // Sets the max files
     totalFiles = nfiles;
+
+    // Creates a thread pool with THREAD_POOL_LIMIT as the limit
     pthread_t trdPool[THREAD_POOL_LIMIT];
 
+    // Initializes the threads in the thread pool
     for (int i = 0; i < THREAD_POOL_LIMIT; i++) {
         pthread_create(&trdPool[i], NULL, &startThread, NULL);
     }
 
     // Allocate memory for taskQueue
     taskQueue = (CompressTask *)malloc(taskQueueSize * sizeof(CompressTask));
+
     if (taskQueue == NULL) {
         perror("Error allocating memory for taskQueue");
         exit(EXIT_FAILURE);
@@ -188,10 +208,12 @@ int main(int argc, char **argv) {
         strcat(full_path, "/");
         strcat(full_path, files[i]);
 
+        // Initilizes a Task and sets initial values to it
         CompressTask *trdData = malloc(sizeof(CompressTask));
         trdData->threadId = i;
         trdData->filePath = strdup(full_path);
 
+        // Adds the Task into the queue
         addTaskToQueue(trdData);
 
         free(full_path);
