@@ -1,6 +1,3 @@
-README
-======
-
 VZIP Project
 ============
 
@@ -8,23 +5,15 @@ Overview
 --------
 This project involves speeding up a video compression tool that processes a folder of uncompressed image files (".ppm" extension) and creates a single zip file with all images after compression. The images in the input folder are named with their frame numbers, and the output zip file should follow lexicographical order.
 
-This is a group project with strict requirements on group size and threading limits. The code must be written in C using the pthread library and tested in a specified Linux environment.
-
-Group Requirements
-------------------
-- Minimum group size: 3 members
-- Maximum group size: 3 members
-- No individual work allowed
-- No groups of two or more than three members allowed
-
 Task Instructions
 -----------------
 1. Download the starting package from the provided link.
-2. Unzip, build, and run the tool. You might need to install the zlib library.
+2. Build, and run the tool. You might need to install the zlib library.
     ```
-    $ unzip project2.zip
-    $ cd project2
     $ make
+    ```
+    
+    ```
     $ make test
     ```
 3. Modify the code to make it faster using threads, with the following constraints:
@@ -44,7 +33,6 @@ PART #1:
 
 Achieving a speedup three times faster than the original code guarantees a C for the speeding factor criterion. The fastest group in class will define the A+ grade (full credit).
 
-Code style will have deductions for bad indentation, organization, and lack of meaningful comments.
 
 Extra Credit Opportunity (20 points)
 -------------------------------------
@@ -69,8 +57,6 @@ Project Setup
     ```
 2. Unzip and build the project:
     ```
-    $ unzip project2.zip
-    $ cd project2
     $ make
     ```
 3. Run the tests:
@@ -83,16 +69,4 @@ Threading Implementation
 - Use the pthread library to implement threading.
 - Ensure no more than 20 threads are running simultaneously.
 - Focus on optimizing the compression process using threads.
-
-Building and Running
----------------------
-1. Navigate to the `src` directory.
-2. Use the provided Makefile to build the project:
-    ```
-    $ make
-    ```
-3. Run the executable:
-    ```
-    $ ./vzip <input_folder> <output_zip_file>
-    ```
 
