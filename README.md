@@ -49,21 +49,6 @@ Visualizer Important Remarks:
 4. No need to use threads in the visualizer.
 5. Include a README file with instructions to build and run your code in your submission.
 
-Project Setup
--------------
-1. Ensure you have zlib installed:
-    ```
-    sudo apt-get install zlib1g-dev
-    ```
-2. Unzip and build the project:
-    ```
-    $ make
-    ```
-3. Run the tests:
-    ```
-    $ make test
-    ```
-
 Threading Implementation
 -------------------------
 - Use the pthread library to implement threading.
